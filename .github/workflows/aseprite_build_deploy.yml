@@ -10,7 +10,7 @@ on:
 
 env:
   BUILD_TYPE: Release
-  
+
 jobs:
   check-version:
     name: Check latest Aseprite release
@@ -21,60 +21,55 @@ jobs:
       should_build: ${{ steps.should_build.outputs.should_build }}
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-    - name: Get latest version info
-      id: version_info
-      run: |
-        data=$(curl -sL https://api.github.com/repos/aseprite/aseprite/releases/latest)
-        LATEST_TAG=$(echo "${data}" | jq -r '.tag_name')
-        DOWNLOAD_URL=$(echo "${data}" | jq -r '.assets[].browser_download_url')
-        VERSION_INFO=$(echo "${data}" | jq -r '.body')
-        
-        echo "${LATEST_TAG}" > ${LATEST_TAG}.txt
-        echo "::set-output name=latest_tag::${LATEST_TAG}"
-        echo "::set-output name=download_url::${DOWNLOAD_URL}"
-        echo "::set-output name=version_info::${VERSION_INFO}"
-    - name: Load version from cache
-      id: version_check
-      uses: actions/cache@v3
-      with:
-        path: ${{ steps.version_info.outputs.latest_tag }}.txt
-        key: cached_version
-    - name: Should we start new build?
-      id: should_build
-      if: steps.version_check.outputs.cache-hit != 'true'
-      run: echo "::set-output name=should_build::true"
-    - name: Create Release
-      id: create_release
-      if: steps.should_build.outputs.should_build
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.version_info.outputs.latest_tag }}
-        release_name: Release Aseprite ${{ steps.version_info.outputs.latest_tag }}
-        body: |
-          ${{ steps.version_info.outputs.version_info }}
-        draft: true
-        prerelease: false
-  
+      - name: Get latest version info
+        id: version_info
+        run: |
+          data=$(curl -sL https://api.github.com/repos/aseprite/aseprite/releases/latest)
+          LATEST_TAG=$(echo "${data}" | jq -r '.tag_name')
+          DOWNLOAD_URL=$(echo "${data}" | jq -r '.assets[].browser_download_url')
+          VERSION_INFO=$(echo "${data}" | jq -r '.body')
+          
+          echo "${LATEST_TAG}" > ${LATEST_TAG}.txt
+
+          # Modern syntax for outputs
+          echo "latest_tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+          echo "download_url=${DOWNLOAD_URL}" >> $GITHUB_OUTPUT
+          echo "version_info=${VERSION_INFO}" >> $GITHUB_OUTPUT
+
+      # Force build always
+      - name: Force build
+        id: should_build
+        run: echo "should_build=true" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        id: create_release
+        if: steps.should_build.outputs.should_build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version_info.outputs.latest_tag }}
+          name: Release Aseprite ${{ steps.version_info.outputs.latest_tag }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-aseprite:
     name: Build Aseprite
     needs: check-version
     if: ${{ needs.check-version.outputs.should_build }}
     runs-on: windows-latest
-
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build tools (Ninja + 7zip)
+      - name: Install build tools
         run: |
           choco install ninja 7zip cmake -y
 
       - name: Add Ninja to PATH
         run: echo "C:\ProgramData\chocolatey\bin" >> $GITHUB_PATH
 
-      - name: Download Skia (from cache if available)
+      - name: Download Skia
         id: skia-cache
         uses: actions/cache@v3
         with:
@@ -89,39 +84,4 @@ jobs:
 
       - name: Download Aseprite source
         run: |
-          curl -L ${{ needs.check-version.outputs.download_url }} -o Aseprite-source.zip
-          tar -xf Aseprite-source.zip -C aseprite
-          mkdir -p aseprite/build
-
-      - name: Set up MSVC build environment
-        shell: cmd
-        run: call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
-
-      - name: Configure CMake
-        working-directory: aseprite/build
-        shell: cmd
-        run: cmake -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} ^
-                   -DLAF_BACKEND=skia ^
-                   -DSKIA_DIR=../../skia ^
-                   -DSKIA_LIBRARY_DIR=../../skia/out/Release-x64 ^
-                   -G Ninja ..
-
-      - name: Build with Ninja
-        working-directory: aseprite/build
-        run: ninja aseprite
-
-      - name: Prepare portable zip
-        working-directory: aseprite/build/bin
-        run: |
-          echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
-          7z a Aseprite-${{ needs.check-version.outputs.latest_tag }}-${{ runner.os }}.zip *
-
-      - name: Upload release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.check-version.outputs.upload_url }}
-          asset_path: aseprite/build/bin/Aseprite-${{ needs.check-version.outputs.latest_tag }}-${{ runner.os }}.zip
-          asset_name: Aseprite-${{ needs.check-version.outputs.latest_tag }}-${{ runner.os }}.zip
-          asset_content_type: application/zip
+          curl -L ${{ needs.c
